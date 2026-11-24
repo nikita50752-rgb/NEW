@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mistral Chat</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="token-overlay" class="hidden">
+    <div class="token-box">
+      <p>Сервер защищён токеном доступа. Введите ACCESS_TOKEN:</p>
+      <input id="token-input" type="password" placeholder="ACCESS_TOKEN" />
+      <button id="token-save">Сохранить</button>
+    </div>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <button id="new-chat" class="new-chat">+ Новый чат</button>
+      <div id="sessions"></div>
+    </aside>
+    <main class="main">
+      <header class="toolbar">
+        <select id="model"></select>
+        <button id="toggle-system" class="link">Системный промпт</button>
+      </header>
+      <div id="system-wrap" class="hidden">
+        <textarea id="system-prompt" rows="3" placeholder="Системный промпт (необязательно)..."></textarea>
+      </div>
+      <div id="messages"></div>
+      <form id="form">
+        <input id="input" type="text" placeholder="Введите сообщение..." autocomplete="off" required />
+        <button id="send" type="submit">Отправить</button>
+      </form>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
