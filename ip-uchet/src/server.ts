@@ -100,10 +100,35 @@ const MIME: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 };
 
+const rateMap = new Map<string, number[]>();
+function rateLimited(req: import('node:http').IncomingMessage): boolean {
+  const ip = req.socket.remoteAddress ?? 'unknown';
+  const now = Date.now();
+  const arr = (rateMap.get(ip) ?? []).filter((t) => now - t < 5 * 60_000);
+  rateMap.set(ip, arr);
+  if (arr.length >= 10) return true;
+  arr.push(now);
+  return false;
+}
+
 const server = createServer(async (req, res) => {
   await loadDB();
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'");
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const db = getDB();
+
+  if (req.method === 'GET' && url.pathname === '/api/health') {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && (url.pathname === '/api/login' || url.pathname === '/api/register') && rateLimited(req)) {
+    sendJson(res, 429, { error: 'Слишком много попыток. Подождите пару минут.' });
+    return;
+  }
 
   if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
