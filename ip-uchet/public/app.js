@@ -134,20 +134,60 @@ function shell(content, active) {
   });
 }
 
+function daysUntil(dateStr) {
+  return Math.ceil((new Date(dateStr + 'T00:00:00') - new Date()) / 86400000);
+}
+
+function deadlineBadge(dateStr) {
+  const d = daysUntil(dateStr);
+  if (d < 0) return `<span class="badge danger">просрочено ${-d} дн.</span>`;
+  if (d === 0) return '<span class="badge danger">сегодня!</span>';
+  if (d <= 7) return `<span class="badge warn">через ${d} дн.</span>`;
+  return `<span class="badge info">через ${d} дн.</span>`;
+}
+
+function chartSvg(months) {
+  const W = 720, H = 220, base = 190, top = 24;
+  const max = Math.max(1, ...months.map((m) => m.income), ...months.map((m) => m.tax));
+  const groupW = (W - 40) / 12;
+  const barW = Math.min(20, groupW / 2 - 4);
+  const bars = months.map((m, i) => {
+    const x = 30 + i * groupW;
+    const ih = Math.round((m.income / max) * (base - top));
+    const th = Math.round((m.tax / max) * (base - top));
+    const label = m.month.slice(5);
+    return `
+      <rect class="bar-income" x="${x}" y="${base - ih}" width="${barW}" height="${ih}" rx="3"><title>${m.month}: доход ${fmt(m.income)}</title></rect>
+      <rect class="bar-tax" x="${x + barW + 3}" y="${base - th}" width="${barW}" height="${th}" rx="3"><title>${m.month}: налог ${fmt(m.tax)}</title></rect>
+      <text x="${x + barW}" y="${H - 8}" text-anchor="middle">${label}</text>`;
+  }).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <line x1="24" y1="${base}" x2="${W - 8}" y2="${base}" stroke="#232c3f" stroke-width="1"/>
+    ${bars}
+    <text x="30" y="14">доход</text>
+    <rect class="bar-income" x="70" y="6" width="10" height="10" rx="2"/>
+    <text x="86" y="14">налог</text>
+    <rect class="bar-tax" x="126" y="6" width="10" height="10" rx="2"/>
+  </svg>`;
+}
+
 async function dashboardView() {
   const year = new Date().getFullYear();
   const [s, entries] = await Promise.all([api(`/api/summary?year=${year}`), api('/api/entries')]);
-  const recent = entries.slice(0, 8);
+  const recent = entries.slice(0, 10);
   shell(`
     <h2>Дашборд ${year}</h2>
     <div class="cards">
-      <div class="card stat"><div class="label">Доход за ${year}</div><div class="value ok">${fmt(s.yearIncome)}</div></div>
+      <div class="card stat"><div class="label">Доход за ${year}</div><div class="value ok">${fmt(s.yearIncome)}</div><div class="hint">${s.months.filter(m => m.income > 0).length} мес. с поступлениями</div></div>
       <div class="card stat"><div class="label">Налог за ${year} (оценка)</div><div class="value warn">${fmt(s.yearTax)}</div><div class="hint">${esc(s.months.find(m => m.income > 0)?.taxLabel ?? '')}</div></div>
       <div class="card stat"><div class="label">Расходы за ${year}</div><div class="value">${fmt(s.yearExpenses)}</div></div>
       ${s.npdLimitLeft !== null && s.npdLimitLeft !== undefined ? `<div class="card stat"><div class="label">Лимит НПД осталось</div><div class="value ${s.npdLimitLeft < 240000 ? 'danger' : 'ok'}">${fmt(s.npdLimitLeft)}</div><div class="hint">из 2 400 000 ₽ / год</div></div>` : ''}
     </div>
+    <div class="panel"><h3>Доходы и налог по месяцам</h3>
+      ${s.months.some(m => m.income > 0 || m.tax > 0) ? chartSvg(s.months) : '<p class="muted">Добавьте доходы — здесь появится график.</p>'}
+    </div>
     <div class="panel"><h3>Ближайшие сроки уплаты</h3>
-      ${s.nextDeadlines.length === 0 ? '<p class="muted">Нет неоплаченных периодов по введённым данным.</p>' : `<table><tr><th>Дата</th><th>Платёж</th></tr>${s.nextDeadlines.map((d) => `<tr><td>${d.date}</td><td>${esc(d.label)}</td></tr>`).join('')}</table>`}
+      ${s.nextDeadlines.length === 0 ? '<p class="muted">Нет неоплаченных периодов по введённым данным.</p>' : `<table><tr><th>Дата</th><th>Платёж</th><th>Статус</th></tr>${s.nextDeadlines.map((d) => `<tr><td>${d.date}</td><td>${esc(d.label)}</td><td>${deadlineBadge(d.date)}</td></tr>`).join('')}</table>`}
       <p class="muted" style="margin-bottom:0">Сверяйте сроки в личном кабинете ФНС.</p>
     </div>
     <div class="panel"><h3>Последние операции</h3>
