@@ -348,9 +348,12 @@ function settingsView() {
   shell(`
     <h2>Настройки</h2>
     <div class="panel">
-      <h3>Профиль и режим налогообложения</h3>
+      <h3>Профиль</h3>
       <p class="muted">Аккаунт: ${esc(me.email)}</p>
       <form class="form-grid" id="profile-form">
+        <div><label>Имя / название</label><input id="p-name" maxlength="100" value="${esc(me.name ?? '')}" placeholder="ИП Иванов" /></div>
+        <div><label>ИНН (10 или 12 цифр)</label><input id="p-inn" inputmode="numeric" maxlength="12" value="${esc(me.inn ?? '')}" placeholder="необязательно" /></div>
+        <div><label>Телефон</label><input id="p-phone" maxlength="30" value="${esc(me.phone ?? '')}" placeholder="+7…" /></div>
         <div><label>Статус</label>
           <select id="p-status">
             <option value="self" ${p.status === 'self' ? 'selected' : ''}>Самозанятый (НПД)</option>
@@ -372,7 +375,26 @@ function settingsView() {
       <div class="error" id="err"></div>
       <p class="muted" style="margin-bottom:0">НПД: лимит 2,4 млн ₽/год, вычет 10 000 ₽, срок — до 28-го след. месяца. УСН: авансы до 28.04/28.07/28.10, год ИП — до 28.04 след. года.</p>
     </div>
+    <div class="panel">
+      <h3>Безопасность</h3>
+      <form class="form-grid" id="password-form" style="max-width:420px">
+        <div><label>Текущий пароль</label><input type="password" id="pw-old" required autocomplete="current-password" /></div>
+        <div><label>Новый пароль (мин. 6)</label><input type="password" id="pw-new" required minlength="6" autocomplete="new-password" /></div>
+        <div><button type="submit">Сменить пароль</button></div>
+      </form>
+      <div class="error" id="pw-err"></div>
+    </div>
+    <div class="panel">
+      <h3>Данные</h3>
+      <div class="row">
+        <a class="btn ghost" href="/api/export.json">Скачать все данные (JSON)</a>
+      </div>
+      <h3 style="margin-top:20px;color:var(--danger)">Опасная зона</h3>
+      <p class="muted">Удаление аккаунта необратимо: все записи и профиль будут стёрты.</p>
+      <button class="btn danger" id="delete-account">Удалить аккаунт</button>
+    </div>
   `, 'settings');
+
   document.getElementById('profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('err');
@@ -381,15 +403,49 @@ function settingsView() {
       const d = await api('/api/profile', {
         method: 'PUT',
         body: JSON.stringify({
+          name: document.getElementById('p-name').value,
+          inn: document.getElementById('p-inn').value,
+          phone: document.getElementById('p-phone').value,
           status: document.getElementById('p-status').value,
           regime: document.getElementById('p-regime').value,
           fixedContributions: Number(document.getElementById('p-fixed').value),
         }),
       });
       me.profile = d.profile;
+      me.name = d.name; me.inn = d.inn; me.phone = d.phone;
       toast('Сохранено');
     } catch (err) {
       errEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById('password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('pw-err');
+    errEl.textContent = '';
+    try {
+      await api('/api/password', {
+        method: 'POST',
+        body: JSON.stringify({ oldPassword: document.getElementById('pw-old').value, newPassword: document.getElementById('pw-new').value }),
+      });
+      toast('Пароль изменён');
+      document.getElementById('password-form').reset();
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById('delete-account').addEventListener('click', async () => {
+    const word = prompt('Для удаления аккаунта введите слово УДАЛИТЬ:');
+    if (word !== 'УДАЛИТЬ') { toast('Отменено', 'err'); return; }
+    try {
+      await api('/api/account', { method: 'DELETE' });
+      me = null;
+      toast('Аккаунт удалён');
+      location.hash = '#/';
+      route();
+    } catch (err) {
+      toast(err.message, 'err');
     }
   });
 }

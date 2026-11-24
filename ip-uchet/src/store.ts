@@ -20,6 +20,9 @@ export interface User {
   passHash: string;
   createdAt: number;
   profile: Profile;
+  name?: string;
+  inn?: string;
+  phone?: string;
 }
 
 export type EntryType = 'income' | 'expense';

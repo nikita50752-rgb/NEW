@@ -188,7 +188,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/me') {
-    sendJson(res, 200, { email: user!.email, profile: user!.profile });
+    sendJson(res, 200, { email: user!.email, profile: user!.profile, name: user!.name, inn: user!.inn, phone: user!.phone });
     return;
   }
 
@@ -214,12 +214,76 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: 'fixedContributions: число >= 0' });
       return;
     }
+    if (body.name !== undefined && (typeof body.name !== 'string' || body.name.length > 100)) {
+      sendJson(res, 400, { error: 'name: строка до 100 символов' });
+      return;
+    }
+    if (body.inn !== undefined && body.inn !== '' && (typeof body.inn !== 'string' || !/^\d{10}(\d{2})?$/.test(body.inn))) {
+      sendJson(res, 400, { error: 'inn: 10 или 12 цифр' });
+      return;
+    }
+    if (body.phone !== undefined && (typeof body.phone !== 'string' || body.phone.length > 30)) {
+      sendJson(res, 400, { error: 'phone: строка до 30 символов' });
+      return;
+    }
     const profile = user!.profile;
     if (body.regime !== undefined) profile.regime = body.regime as Regime;
     if (body.status !== undefined) profile.status = body.status as Status;
     if (body.fixedContributions !== undefined) profile.fixedContributions = body.fixedContributions as number;
+    if (body.name !== undefined) user!.name = body.name.trim() || undefined;
+    if (body.inn !== undefined) user!.inn = body.inn.trim() || undefined;
+    if (body.phone !== undefined) user!.phone = body.phone.trim() || undefined;
     await saveDB();
-    sendJson(res, 200, { profile });
+    sendJson(res, 200, { profile, name: user!.name, inn: user!.inn, phone: user!.phone });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/password') {
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    const oldPassword = typeof body.oldPassword === 'string' ? body.oldPassword : '';
+    const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+    if (!verifyPassword(oldPassword, user!.salt, user!.passHash)) {
+      sendJson(res, 401, { error: 'Неверный текущий пароль' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      sendJson(res, 400, { error: 'Новый пароль минимум 6 символов' });
+      return;
+    }
+    user!.salt = newSalt();
+    user!.passHash = hashPassword(newPassword, user!.salt);
+    await saveDB();
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/export.json') {
+    const entries = db.entries.filter((e) => e.userId === user!.id);
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      user: { email: user!.email, name: user!.name, inn: user!.inn, phone: user!.phone, profile: user!.profile, createdAt: user!.createdAt },
+      entries,
+    };
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="moy nalog-export.json"'.replace(' ', '-'),
+    });
+    res.end(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/account') {
+    db.users = db.users.filter((u) => u.id !== user!.id);
+    db.entries = db.entries.filter((e) => e.userId !== user!.id);
+    await saveDB();
+    clearSessionCookie(res);
+    sendJson(res, 200, { ok: true });
     return;
   }
 
