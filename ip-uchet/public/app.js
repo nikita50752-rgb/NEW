@@ -2,6 +2,7 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 let me = null;
 let toastTimer = null;
+let editingId = null;
 
 function toast(msg, type = 'ok') {
   toastEl.textContent = msg;
@@ -198,58 +199,42 @@ async function dashboardView() {
 
 function entriesView(type) {
   const isIncome = type === 'income';
+  const editing = editingId ? 'Редактирование записи' : 'Новая запись';
   shell(`
     <h2>${isIncome ? 'Доходы' : 'Расходы'}</h2>
     <div class="panel">
-      <h3>Новая запись</h3>
+      <h3 id="form-title">${editing}</h3>
       <form class="form-grid" id="entry-form">
         <div><label>Дата</label><input type="date" id="f-date" required value="${new Date().toISOString().slice(0, 10)}" /></div>
         <div><label>Сумма, ₽</label><input type="number" id="f-amount" step="0.01" min="0.01" required placeholder="0.00" /></div>
-        <div><label>Категория</label><input id="f-category" required maxlength="100" placeholder="${isIncome ? 'услуги, товары…' : 'аренда, материалы…'}" /></div>
+        <div><label>Категория</label><input id="f-category" required maxlength="100" placeholder="${isIncome ? 'услуги, товары…' : 'аренда, материалы…'}" /><div class="chips" id="chips"></div></div>
         ${isIncome ? `<div><label>Кто платил</label><select id="f-payer"><option value="person">Физлицо — 4%</option><option value="company">Компания/ИП — 6%</option></select></div>` : ''}
         ${isIncome ? `<div><label>Чек НПД №</label><input id="f-receipt" maxlength="100" placeholder="необязательно" /></div>` : ''}
         <div><label>Способ оплаты</label><select id="f-method"><option value="card">Карта</option><option value="cash">Наличные</option><option value="transfer">Перевод</option></select></div>
         <div><label>Примечание</label><input id="f-note" maxlength="500" /></div>
-        <div><button type="submit">Добавить</button></div>
+        <div class="row"><button type="submit" id="submit-btn">${editingId ? 'Сохранить' : 'Добавить'}</button>${editingId ? '<button type="button" class="btn ghost" id="cancel-edit">Отмена</button>' : ''}</div>
       </form>
       <div class="error" id="err"></div>
     </div>
     <div class="panel">
       <div class="row" style="justify-content:space-between">
         <h3 style="margin:0">Список</h3>
-        <a class="btn ghost small" href="/api/export.csv?type=${type}&year=${new Date().getFullYear()}">Экспорт CSV</a>
+        <div class="row">
+          <select id="month-filter" style="width:auto"><option value="">Все месяцы</option></select>
+          <a class="btn ghost small" href="/api/export.csv?type=${type}&year=${new Date().getFullYear()}">Экспорт CSV</a>
+        </div>
       </div>
       <div id="list" style="margin-top:10px"><p class="muted">Загрузка…</p></div>
     </div>
   `, isIncome ? 'incomes' : 'expenses');
 
-  document.getElementById('entry-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const errEl = document.getElementById('err');
-    errEl.textContent = '';
-    const body = {
-      type,
-      date: document.getElementById('f-date').value,
-      amount: Number(document.getElementById('f-amount').value),
-      category: document.getElementById('f-category').value.trim(),
-      method: document.getElementById('f-method').value,
-      note: document.getElementById('f-note').value.trim(),
-    };
-    if (isIncome) {
-      body.payerType = document.getElementById('f-payer').value;
-      body.receipt = document.getElementById('f-receipt').value.trim();
-    }
-    try {
-      await api('/api/entries', { method: 'POST', body: JSON.stringify(body) });
-      toast('Запись добавлена');
-      entriesView(type);
-    } catch (err) {
-      errEl.textContent = err.message;
-    }
-  });
+  let currentList = [];
 
-  api(`/api/entries?type=${type}`).then((list) => {
-    document.getElementById('list').innerHTML = list.length === 0
+  function renderList() {
+    const mf = document.getElementById('month-filter').value;
+    const list = mf ? currentList.filter((e) => e.date.startsWith(mf)) : currentList;
+    const el = document.getElementById('list');
+    el.innerHTML = list.length === 0
       ? '<p class="muted">Пока пусто.</p>'
       : `<table><tr><th>Дата</th><th>Категория</th>${isIncome ? '<th>Плательщик</th><th>Чек</th>' : ''}<th>Сумма</th><th></th></tr>${list.map((e) => `
         <tr>
@@ -257,14 +242,104 @@ function entriesView(type) {
           <td>${esc(e.category)}${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</td>
           ${isIncome ? `<td>${e.payerType === 'company' ? 'компания 6%' : 'физлицо 4%'}</td><td>${esc(e.receipt ?? '')}</td>` : ''}
           <td>${fmt(e.amount)}</td>
-          <td><button class="icon-btn del" data-id="${e.id}" title="Удалить">✕</button></td>
+          <td class="row" style="gap:2px">
+            <button class="icon-btn edit" data-id="${e.id}" title="Редактировать">✎</button>
+            <button class="icon-btn del" data-id="${e.id}" title="Удалить">✕</button>
+          </td>
         </tr>`).join('')}</table>`;
-    document.querySelectorAll('.del').forEach((b) => b.addEventListener('click', async () => {
+    el.querySelectorAll('.del').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Удалить запись?')) return;
       await api('/api/entries/' + b.dataset.id, { method: 'DELETE' });
       toast('Удалено');
       entriesView(type);
     }));
+    el.querySelectorAll('.edit').forEach((b) => b.addEventListener('click', () => {
+      const e = currentList.find((x) => x.id === b.dataset.id);
+      if (!e) return;
+      editingId = e.id;
+      entriesView(type);
+      document.getElementById('f-date').value = e.date;
+      document.getElementById('f-amount').value = e.amount;
+      document.getElementById('f-category').value = e.category;
+      document.getElementById('f-method').value = e.method ?? 'card';
+      document.getElementById('f-note').value = e.note ?? '';
+      if (isIncome) {
+        document.getElementById('f-payer').value = e.payerType ?? 'person';
+        document.getElementById('f-receipt').value = e.receipt ?? '';
+      }
+      document.getElementById('f-amount').focus();
+    }));
+  }
+
+  document.getElementById('month-filter').addEventListener('change', renderList);
+
+  document.getElementById('entry-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('err');
+    errEl.textContent = '';
+    const amount = Number(document.getElementById('f-amount').value);
+    const date = document.getElementById('f-date').value;
+    const category = document.getElementById('f-category').value.trim();
+    if (!date) { errEl.textContent = 'Укажите дату'; return; }
+    if (!Number.isFinite(amount) || amount <= 0) { errEl.textContent = 'Сумма должна быть больше 0'; return; }
+    if (!category) { errEl.textContent = 'Укажите категорию'; return; }
+    const body = { type, date, amount, category, method: document.getElementById('f-method').value, note: document.getElementById('f-note').value.trim() };
+    if (isIncome) {
+      body.payerType = document.getElementById('f-payer').value;
+      body.receipt = document.getElementById('f-receipt').value.trim();
+    }
+    try {
+      if (editingId) {
+        await api('/api/entries/' + editingId, { method: 'PUT', body: JSON.stringify(body) });
+        toast('Сохранено');
+      } else {
+        await api('/api/entries', { method: 'POST', body: JSON.stringify(body) });
+        toast('Запись добавлена');
+      }
+      editingId = null;
+      entriesView(type);
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  });
+
+  const cancelBtn = document.getElementById('cancel-edit');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => { editingId = null; entriesView(type); });
+
+  api(`/api/entries?type=${type}`).then((list) => {
+    currentList = list;
+    const months = [...new Set(list.map((e) => e.date.slice(0, 7)))].sort().reverse();
+    const mf = document.getElementById('month-filter');
+    for (const m of months) {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      mf.appendChild(o);
+    }
+    const counts = {};
+    for (const e of list) counts[e.category] = (counts[e.category] ?? 0) + 1;
+    const chips = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const chipsEl = document.getElementById('chips');
+    if (chipsEl && chips.length) {
+      chipsEl.innerHTML = chips.map(([c]) => `<span class="chip" data-c="${esc(c)}">${esc(c)}</span>`).join('');
+      chipsEl.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
+        document.getElementById('f-category').value = c.dataset.c;
+      }));
+    }
+    if (editingId) {
+      const e = list.find((x) => x.id === editingId);
+      if (e) {
+        document.getElementById('f-date').value = e.date;
+        document.getElementById('f-amount').value = e.amount;
+        document.getElementById('f-category').value = e.category;
+        document.getElementById('f-method').value = e.method ?? 'card';
+        document.getElementById('f-note').value = e.note ?? '';
+        if (isIncome) {
+          document.getElementById('f-payer').value = e.payerType ?? 'person';
+          document.getElementById('f-receipt').value = e.receipt ?? '';
+        }
+      }
+    }
+    renderList();
   }).catch((err) => { document.getElementById('list').innerHTML = `<p class="error">${esc(err.message)}</p>`; });
 }
 

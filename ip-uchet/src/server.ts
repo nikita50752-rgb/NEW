@@ -268,6 +268,35 @@ const server = createServer(async (req, res) => {
   }
 
   const entryMatch = url.pathname.match(/^\/api\/entries\/([\w-]+)$/);
+  if (entryMatch && req.method === 'PUT') {
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    if (!isValidEntry(body)) {
+      sendJson(res, 400, { error: 'Нужны: type (income|expense), date (YYYY-MM-DD), amount (>0), category' });
+      return;
+    }
+    const entry = db.entries.find((e) => e.id === entryMatch[1] && e.userId === user!.id);
+    if (!entry) {
+      sendJson(res, 404, { error: 'Запись не найдена' });
+      return;
+    }
+    entry.type = body.type;
+    entry.date = body.date;
+    entry.amount = Math.round(body.amount * 100) / 100;
+    entry.category = body.category;
+    if (body.payerType !== undefined) entry.payerType = body.payerType;
+    if (typeof body.method === 'string' && body.method) entry.method = body.method.slice(0, 50); else delete entry.method;
+    if (typeof body.receipt === 'string' && body.receipt) entry.receipt = body.receipt.slice(0, 100); else delete entry.receipt;
+    if (typeof body.note === 'string' && body.note) entry.note = body.note.slice(0, 500); else delete entry.note;
+    await saveDB();
+    sendJson(res, 200, entry);
+    return;
+  }
   if (entryMatch && req.method === 'DELETE') {
     const before = db.entries.length;
     db.entries = db.entries.filter((e) => !(e.id === entryMatch[1] && e.userId === user!.id));
@@ -296,7 +325,11 @@ const server = createServer(async (req, res) => {
     const type = url.searchParams.get('type') === 'expense' ? 'expense' : 'income';
     const year = Number(url.searchParams.get('year') ?? new Date().getFullYear());
     const rows = db.entries.filter((e) => e.userId === user!.id && e.type === type && e.date.startsWith(String(year)));
-    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const esc = (v: string) => {
+      const s = String(v);
+      const dangerous = /^[=+\-@]/.test(s);
+      return `"${dangerous ? "'" : ''}${s.replace(/"/g, '""')}"`;
+    };
     const head = type === 'income' ? 'date;amount;category;payerType;method;receipt;note' : 'date;amount;category;note';
     const lines = rows
       .sort((a, b) => a.date.localeCompare(b.date))
