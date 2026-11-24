@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mistral Chat</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e6e6e6;
+      display: flex;
+      justify-content: center;
+      height: 100vh;
+    }
+    .app {
+      width: 100%;
+      max-width: 720px;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+    }
+    h1 { font-size: 18px; margin: 8px 0 0; color: #ffb86b; }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid #262a36;
+      border-radius: 12px;
+      background: #161a23;
+    }
+    .msg {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .msg.user { align-self: flex-end; background: #2b4acb; color: #fff; }
+    .msg.assistant { align-self: flex-start; background: #262a36; }
+    .msg.error { align-self: flex-start; background: #5b2323; }
+    #form { display: flex; gap: 8px; }
+    #input {
+      flex: 1;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid #262a36;
+      background: #161a23;
+      color: #e6e6e6;
+      font-size: 15px;
+      outline: none;
+    }
+    #input:focus { border-color: #ffb86b; }
+    button {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      background: #ffb86b;
+      color: #1a1a1a;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Mistral Chat (mistral-small-latest)</h1>
+    <div id="messages"></div>
+    <form id="form">
+      <input id="input" type="text" placeholder="Введите сообщение..." autocomplete="off" required />
+      <button id="send" type="submit">Отправить</button>
+    </form>
+  </div>
+  <script>
+    const messagesEl = document.getElementById('messages');
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const history = [];
+
+    function addMessage(role, text) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      sendBtn.disabled = true;
+      addMessage('user', text);
+      const pending = addMessage('assistant', '…');
+      history.push({ role: 'user', content: text });
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: history }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
+        pending.textContent = data.reply;
+        history.push({ role: 'assistant', content: data.reply });
+      } catch (err) {
+        pending.className = 'msg error';
+        pending.textContent = 'Ошибка: ' + err.message;
+        history.pop();
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+    });
+  </script>
+</body>
+</html>
