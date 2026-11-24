@@ -122,9 +122,14 @@ function shell(content, active) {
       <a href="#/app" class="${active === 'dash' ? 'active' : ''}">Дашборд</a>
       <a href="#/incomes" class="${active === 'incomes' ? 'active' : ''}">Доходы</a>
       <a href="#/expenses" class="${active === 'expenses' ? 'active' : ''}">Расходы</a>
+      <a href="#/calendar" class="${active === 'calendar' ? 'active' : ''}">Календарь</a>
+      <a href="#/clients" class="${active === 'clients' ? 'active' : ''}">Контрагенты</a>
       <a href="#/settings" class="${active === 'settings' ? 'active' : ''}">Настройки</a>
     </nav>
-    <div class="user"><span>${esc(me?.email ?? '')}</span><button class="btn ghost small" id="logout">Выйти</button></div>
+    <div class="user">
+      <button class="icon-btn" id="theme-toggle" title="Тема">${document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️'}</button>
+      <span>${esc(me?.email ?? '')}</span><button class="btn ghost small" id="logout">Выйти</button>
+    </div>
   </div></div>
   <div class="page">${content}</div>`;
   document.getElementById('logout').addEventListener('click', async () => {
@@ -133,6 +138,17 @@ function shell(content, active) {
     location.hash = '#/';
     route();
   });
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const cur = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = cur;
+    localStorage.setItem('theme', cur);
+    route();
+  });
+}
+
+function initTheme() {
+  const t = localStorage.getItem('theme') || 'dark';
+  document.documentElement.dataset.theme = t;
 }
 
 function daysUntil(dateStr) {
@@ -187,6 +203,14 @@ async function dashboardView() {
     <div class="panel"><h3>Доходы и налог по месяцам</h3>
       ${s.months.some(m => m.income > 0 || m.tax > 0) ? chartSvg(s.months) : '<p class="muted">Добавьте доходы — здесь появится график.</p>'}
     </div>
+    <div class="panel"><h3>Структура по категориям за ${year}</h3>
+      ${s.categories.length === 0 ? '<p class="muted">Пока нет данных.</p>' : donutSvg(s.categories)}
+      <p class="muted" style="margin-bottom:0">При вашем доходе за год выгоднее режим: <b>${{ npd: 'НПД', usn6: 'УСН 6%', usn15: 'УСН 15%' }[s.comparison.best]}</b> (налог ${fmt(s.comparison[s.comparison.best])}). Подробно — в разделе «Календарь».</p>
+    </div>
+    <div class="panel row" style="justify-content:space-between">
+      <span class="muted">Нужен отчёт для бухгалтера?</span>
+      <button class="btn ghost small" id="print-report">Печать / PDF</button>
+    </div>
     <div class="panel"><h3>Ближайшие сроки уплаты</h3>
       ${s.nextDeadlines.length === 0 ? '<p class="muted">Нет неоплаченных периодов по введённым данным.</p>' : `<table><tr><th>Дата</th><th>Платёж</th><th>Статус</th></tr>${s.nextDeadlines.map((d) => `<tr><td>${d.date}</td><td>${esc(d.label)}</td><td>${deadlineBadge(d.date)}</td></tr>`).join('')}</table>`}
       <p class="muted" style="margin-bottom:0">Сверяйте сроки в личном кабинете ФНС.</p>
@@ -195,6 +219,7 @@ async function dashboardView() {
       ${recent.length === 0 ? '<p class="muted">Пока пусто — добавьте первый доход.</p>' : `<table><tr><th>Дата</th><th>Тип</th><th>Категория</th><th>Сумма</th></tr>${recent.map((e) => `<tr><td>${e.date}</td><td><span class="tag ${e.type}">${e.type === 'income' ? 'доход' : 'расход'}</span></td><td>${esc(e.category)}</td><td>${fmt(e.amount)}</td></tr>`).join('')}</table>`}
     </div>
   `, 'dash');
+  document.getElementById('print-report')?.addEventListener('click', () => window.print());
 }
 
 function entriesView(type) {
@@ -209,6 +234,7 @@ function entriesView(type) {
         <div><label>Сумма, ₽</label><input type="number" id="f-amount" step="0.01" min="0.01" required placeholder="0.00" /></div>
         <div><label>Категория</label><input id="f-category" required maxlength="100" placeholder="${isIncome ? 'услуги, товары…' : 'аренда, материалы…'}" /><div class="chips" id="chips"></div></div>
         ${isIncome ? `<div><label>Кто платил</label><select id="f-payer"><option value="person">Физлицо — 4%</option><option value="company">Компания/ИП — 6%</option></select></div>` : ''}
+        ${isIncome ? `<div><label>Контрагент</label><select id="f-client"><option value="">— без контрагента —</option></select></div>` : ''}
         ${isIncome ? `<div><label>Чек НПД №</label><input id="f-receipt" maxlength="100" placeholder="необязательно" /></div>` : ''}
         <div><label>Способ оплаты</label><select id="f-method"><option value="card">Карта</option><option value="cash">Наличные</option><option value="transfer">Перевод</option></select></div>
         <div><label>Примечание</label><input id="f-note" maxlength="500" /></div>
@@ -220,8 +246,10 @@ function entriesView(type) {
       <div class="row" style="justify-content:space-between">
         <h3 style="margin:0">Список</h3>
         <div class="row">
+          <input id="search" placeholder="Поиск по категории/примечанию…" style="width:220px" />
           <select id="month-filter" style="width:auto"><option value="">Все месяцы</option></select>
           <a class="btn ghost small" href="/api/export.csv?type=${type}&year=${new Date().getFullYear()}">Экспорт CSV</a>
+          ${isIncome ? `<label class="btn ghost small" style="cursor:pointer">Импорт CSV банка<input type="file" id="import-file" accept=".csv,.txt" style="display:none" /></label>` : ''}
         </div>
       </div>
       <div id="list" style="margin-top:10px"><p class="muted">Загрузка…</p></div>
@@ -230,17 +258,21 @@ function entriesView(type) {
 
   let currentList = [];
 
+  let clientNames = {};
   function renderList() {
     const mf = document.getElementById('month-filter').value;
-    const list = mf ? currentList.filter((e) => e.date.startsWith(mf)) : currentList;
+    const q = (document.getElementById('search')?.value ?? '').toLowerCase();
+    let list = currentList;
+    if (mf) list = list.filter((e) => e.date.startsWith(mf));
+    if (q) list = list.filter((e) => (e.category + ' ' + (e.note ?? '') + ' ' + (clientNames[e.clientId ?? ''] ?? '')).toLowerCase().includes(q));
     const el = document.getElementById('list');
     el.innerHTML = list.length === 0
       ? '<p class="muted">Пока пусто.</p>'
-      : `<table><tr><th>Дата</th><th>Категория</th>${isIncome ? '<th>Плательщик</th><th>Чек</th>' : ''}<th>Сумма</th><th></th></tr>${list.map((e) => `
+      : `<table><tr><th>Дата</th><th>Категория</th>${isIncome ? '<th>Контрагент</th><th>Плательщик</th><th>Чек</th>' : ''}<th>Сумма</th><th></th></tr>${list.map((e) => `
         <tr>
           <td>${e.date}</td>
           <td>${esc(e.category)}${e.note ? `<div class="muted">${esc(e.note)}</div>` : ''}</td>
-          ${isIncome ? `<td>${e.payerType === 'company' ? 'компания 6%' : 'физлицо 4%'}</td><td>${esc(e.receipt ?? '')}</td>` : ''}
+          ${isIncome ? `<td>${esc(clientNames[e.clientId ?? ''] ?? '')}</td><td>${e.payerType === 'company' ? 'компания 6%' : 'физлицо 4%'}</td><td>${esc(e.receipt ?? '')}</td>` : ''}
           <td>${fmt(e.amount)}</td>
           <td class="row" style="gap:2px">
             <button class="icon-btn edit" data-id="${e.id}" title="Редактировать">✎</button>
@@ -287,6 +319,8 @@ function entriesView(type) {
     if (isIncome) {
       body.payerType = document.getElementById('f-payer').value;
       body.receipt = document.getElementById('f-receipt').value.trim();
+      const cid = document.getElementById('f-client').value;
+      if (cid) body.clientId = cid;
     }
     try {
       if (editingId) {
@@ -305,6 +339,62 @@ function entriesView(type) {
 
   const cancelBtn = document.getElementById('cancel-edit');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { editingId = null; entriesView(type); });
+
+  document.getElementById('search')?.addEventListener('input', renderList);
+
+  const importFile = document.getElementById('import-file');
+  if (importFile) importFile.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const text = await f.text();
+    const rows = parseBankCsv(text);
+    if (rows.length === 0) { toast('Не удалось распознать CSV: нужны колонки с датой и суммой', 'err'); return; }
+    if (!confirm(`Найдено ${rows.length} операций. Импортировать как доходы?`)) return;
+    let ok = 0;
+    for (const r of rows) {
+      try {
+        await api('/api/entries', { method: 'POST', body: JSON.stringify({ type: 'income', date: r.date, amount: r.amount, category: 'Импорт банка', note: r.desc, method: 'transfer', payerType: 'person' }) });
+        ok++;
+      } catch { /* пропускаем дубли/ошибки */ }
+    }
+    toast(`Импортировано: ${ok} из ${rows.length}`);
+    entriesView(type);
+  });
+
+  function parseBankCsv(text) {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return [];
+    const sep = lines[0].includes(';') ? ';' : ',';
+    const head = lines[0].toLowerCase();
+    const di = head.split(sep).findIndex((h) => h.includes('дат'));
+    const ai = head.split(sep).findIndex((h) => h.includes('сумм'));
+    const si = head.split(sep).findIndex((h) => h.includes('описан') || h.includes('назнач'));
+    if (di < 0 || ai < 0) return [];
+    const out = [];
+    for (const line of lines.slice(1)) {
+      const cols = line.split(sep);
+      const d = cols[di]?.trim().replace(/"/g, '');
+      const m = d?.match(/(\d{2})[./](\d{2})[./](\d{4})/);
+      const a = Number((cols[ai] ?? '').replace(/"/g, '').replace(',', '.').replace(/[^\d.-]/g, ''));
+      if (!m || !Number.isFinite(a) || a <= 0) continue;
+      out.push({ date: `${m[3]}-${m[2]}-${m[1]}`, amount: a, desc: (cols[si] ?? '').replace(/"/g, '').slice(0, 200) });
+    }
+    return out;
+  }
+
+  if (isIncome) {
+    api('/api/clients').then((clients) => {
+      clientNames = Object.fromEntries(clients.map((c) => [c.id, c.name]));
+      const sel = document.getElementById('f-client');
+      for (const c of clients) {
+        const o = document.createElement('option');
+        o.value = c.id;
+        o.textContent = `${c.name} (${c.type === 'company' ? '6%' : '4%'})`;
+        sel.appendChild(o);
+      }
+      renderList();
+    }).catch(() => {});
+  }
 
   api(`/api/entries?type=${type}`).then((list) => {
     currentList = list;
@@ -336,6 +426,7 @@ function entriesView(type) {
         if (isIncome) {
           document.getElementById('f-payer').value = e.payerType ?? 'person';
           document.getElementById('f-receipt').value = e.receipt ?? '';
+          if (e.clientId) document.getElementById('f-client').value = e.clientId;
         }
       }
     }
@@ -469,9 +560,121 @@ async function route() {
   }
   if (hash === '#/incomes') entriesView('income');
   else if (hash === '#/expenses') entriesView('expense');
+  else if (hash === '#/calendar') calendarView();
+  else if (hash === '#/clients') clientsView();
   else if (hash === '#/settings') settingsView();
   else dashboardView();
 }
 
+function donutSvg(cats) {
+  const data = cats.filter((c) => c.income + c.expense > 0).slice(0, 8);
+  const total = data.reduce((s, c) => s + c.income + c.expense, 0) || 1;
+  const colors = ['#6366f1', '#22d3ee', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#f472b6', '#94a3b8'];
+  const R = 60, C = 2 * Math.PI * R;
+  let offset = 0;
+  const arcs = data.map((c, i) => {
+    const frac = (c.income + c.expense) / total;
+    const el = `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${colors[i % colors.length]}" stroke-width="22"
+      stroke-dasharray="${(frac * C).toFixed(1)} ${C.toFixed(1)}" stroke-dashoffset="${(-offset * C).toFixed(1)}"
+      transform="rotate(-90 80 80)"><title>${esc(c.category)}: ${fmt(c.income + c.expense)}</title></circle>`;
+    offset += frac;
+    return el;
+  }).join('');
+  const legend = data.map((c, i) => `<div class="row" style="gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:${colors[i % colors.length]};display:inline-block"></span><span>${esc(c.category)}</span><span class="muted">${fmt(c.income + c.expense)}</span></div>`).join('');
+  return `<div class="row" style="align-items:flex-start;gap:24px;flex-wrap:wrap">
+    <svg viewBox="0 0 160 160" style="width:200px;height:200px;flex-shrink:0">${arcs}</svg>
+    <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">${legend}</div>
+  </div>`;
+}
+
+async function calendarView() {
+  const year = new Date().getFullYear();
+  const s = await api(`/api/summary?year=${year}`);
+  const rows = [];
+  if (s.regime === 'npd') {
+    for (const m of s.months) {
+      if (m.income <= 0) continue;
+      const [y, mo] = m.month.split('-').map(Number);
+      const dl = new Date(Date.UTC(y, mo, 0, 12)); // 28-е следующего месяца: последний день + ...
+      const date = `${y + (mo === 12 ? 1 : 0)}-${mo === 12 ? '01' : String(mo + 1).padStart(2, '0')}-28`;
+      rows.push({ date, label: `НПД за ${m.month}`, amount: m.tax });
+    }
+  } else {
+    const quarters = [[0, 3], [3, 6], [6, 9], [9, 12]];
+    const dl = [`${year}-04-28`, `${year}-07-28`, `${year}-10-28`, `${year + 1}-04-28`];
+    quarters.forEach(([a, b], i) => {
+      const tax = s.months.slice(a, b).reduce((sum, m) => sum + m.tax, 0);
+      const income = s.months.slice(a, b).reduce((sum, m) => sum + m.income, 0);
+      if (income > 0) rows.push({ date: dl[i], label: i === 3 ? `УСН за ${year} (год)` : `УСН аванс Q${i + 1}`, amount: Math.round(tax * 100) / 100 });
+    });
+  }
+  const cmp = s.comparison;
+  const cmpRow = (key, label) => `<tr><td>${label}</td><td>${fmt(cmp[key])}</td><td>${cmp.best === key ? '<span class="badge ok">выгоднее</span>' : ''}</td></tr>`;
+  shell(`
+    <h2>Налоговый календарь ${year}</h2>
+    <div class="panel">
+      <h3>Все платежи по году</h3>
+      ${rows.length === 0 ? '<p class="muted">Нет доходов за год — календарь пуст.</p>' : `<table><tr><th>Срок</th><th>Платёж</th><th>Сумма</th><th>Статус</th></tr>${rows.map((r) => `<tr><td>${r.date}</td><td>${esc(r.label)}</td><td>${fmt(r.amount)}</td><td>${deadlineBadge(r.date)}</td></tr>`).join('')}</table>`}
+      <p class="muted" style="margin-bottom:0">Сроки по общим правилам; точные — в личном кабинете ФНС.</p>
+    </div>
+    <div class="panel">
+      <h3>Какой режим выгоднее при доходе ${fmt(s.yearIncome)} за ${year}?</h3>
+      <table><tr><th>Режим</th><th>Налог за год</th><th></th></tr>
+        ${cmpRow('npd', 'НПД (4%/6%, вычет 10 000 ₽)')}
+        ${cmpRow('usn6', 'УСН 6% (с вычетом взносов ИП)')}
+        ${cmpRow('usn15', 'УСН 15% (доходы − расходы)')}
+      </table>
+      <p class="muted" style="margin-bottom:0">Оценка по введённым данным; взносы ИП 1% свыше 300 тыс. не учтены в сравнении.</p>
+    </div>
+  `, 'calendar');
+}
+
+async function clientsView() {
+  shell(`
+    <h2>Контрагенты</h2>
+    <div class="panel">
+      <h3>Новый контрагент</h3>
+      <form class="form-grid" id="client-form">
+        <div><label>Имя / название</label><input id="c-name" required maxlength="100" placeholder="ООО «Ромашка» или Иван" /></div>
+        <div><label>Тип (ставка НПД)</label><select id="c-type"><option value="person">Физлицо — 4%</option><option value="company">Компания/ИП — 6%</option></select></div>
+        <div><label>Телефон</label><input id="c-phone" maxlength="30" /></div>
+        <div><label>Примечание</label><input id="c-note" maxlength="500" /></div>
+        <div><button type="submit">Добавить</button></div>
+      </form>
+      <div class="error" id="err"></div>
+    </div>
+    <div class="panel"><h3>Список</h3><div id="list"><p class="muted">Загрузка…</p></div></div>
+  `, 'clients');
+  document.getElementById('client-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('err');
+    errEl.textContent = '';
+    try {
+      await api('/api/clients', { method: 'POST', body: JSON.stringify({
+        name: document.getElementById('c-name').value,
+        type: document.getElementById('c-type').value,
+        phone: document.getElementById('c-phone').value,
+        note: document.getElementById('c-note').value,
+      }) });
+      toast('Контрагент добавлен');
+      clientsView();
+    } catch (err) { errEl.textContent = err.message; }
+  });
+  api('/api/clients').then((list) => {
+    document.getElementById('list').innerHTML = list.length === 0 ? '<p class="muted">Пока пусто.</p>' : `<table>
+      <tr><th>Имя</th><th>Тип</th><th>Телефон</th><th>Доходов на сумму</th><th></th></tr>
+      ${list.map((c) => `<tr><td>${esc(c.name)}${c.note ? `<div class="muted">${esc(c.note)}</div>` : ''}</td>
+        <td>${c.type === 'company' ? 'компания 6%' : 'физлицо 4%'}</td><td>${esc(c.phone ?? '')}</td><td>${fmt(c.total ?? 0)}</td>
+        <td><button class="icon-btn del" data-id="${c.id}">✕</button></td></tr>`).join('')}</table>`;
+    document.querySelectorAll('.del').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Удалить контрагента? Записи останутся, связь уберётся.')) return;
+      await api('/api/clients/' + b.dataset.id, { method: 'DELETE' });
+      toast('Удалено');
+      clientsView();
+    }));
+  }).catch((err) => { document.getElementById('list').innerHTML = `<p class="error">${esc(err.message)}</p>`; });
+}
+
 window.addEventListener('hashchange', route);
+initTheme();
 route();

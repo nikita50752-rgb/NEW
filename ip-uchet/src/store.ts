@@ -39,15 +39,27 @@ export interface Entry {
   receipt?: string;
   category: string;
   note?: string;
+  clientId?: string;
+  createdAt: number;
+}
+
+export interface Client {
+  id: string;
+  userId: string;
+  name: string;
+  type: PayerType;
+  phone?: string;
+  note?: string;
   createdAt: number;
 }
 
 interface DB {
   users: User[];
   entries: Entry[];
+  clients: Client[];
 }
 
-let db: DB = { users: [], entries: [] };
+let db: DB = { users: [], entries: [], clients: [] };
 let loaded = false;
 
 export async function loadDB(): Promise<void> {
@@ -55,8 +67,9 @@ export async function loadDB(): Promise<void> {
   try {
     db = JSON.parse(await readFile(DB_FILE, 'utf8')) as DB;
   } catch {
-    db = { users: [], entries: [] };
+    db = { users: [], entries: [], clients: [] };
   }
+  if (!db.clients) db.clients = [];
   loaded = true;
 }
 

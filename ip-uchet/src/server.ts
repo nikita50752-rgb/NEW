@@ -79,7 +79,7 @@ function currentUser(req: import('node:http').IncomingMessage) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function isValidEntry(body: Record<string, unknown>): body is { type: EntryType; date: string; amount: number; category: string; payerType?: PayerType; method?: string; receipt?: string; note?: string } {
+function isValidEntry(body: Record<string, unknown>): body is { type: EntryType; date: string; amount: number; category: string; payerType?: PayerType; method?: string; receipt?: string; note?: string; clientId?: string } {
   return (
     (body.type === 'income' || body.type === 'expense') &&
     typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) &&
@@ -88,7 +88,8 @@ function isValidEntry(body: Record<string, unknown>): body is { type: EntryType;
     (body.payerType === undefined || body.payerType === 'person' || body.payerType === 'company') &&
     (body.method === undefined || typeof body.method === 'string') &&
     (body.receipt === undefined || typeof body.receipt === 'string') &&
-    (body.note === undefined || typeof body.note === 'string')
+    (body.note === undefined || typeof body.note === 'string') &&
+    (body.clientId === undefined || typeof body.clientId === 'string')
   );
 }
 
@@ -350,9 +351,72 @@ const server = createServer(async (req, res) => {
     if (typeof body.method === 'string' && body.method) entry.method = body.method.slice(0, 50);
     if (typeof body.receipt === 'string' && body.receipt) entry.receipt = body.receipt.slice(0, 100);
     if (typeof body.note === 'string' && body.note) entry.note = body.note.slice(0, 500);
+    if (typeof body.clientId === 'string' && body.clientId) {
+      const client = db.clients.find((c) => c.id === body.clientId && c.userId === user!.id);
+      if (!client) {
+        sendJson(res, 400, { error: 'Контрагент не найден' });
+        return;
+      }
+      entry.clientId = client.id;
+    }
     db.entries.push(entry);
     await saveDB();
     sendJson(res, 200, entry);
+    return;
+  }
+
+  if (url.pathname === '/api/clients' && req.method === 'GET') {
+    const list = db.clients
+      .filter((c) => c.userId === user!.id)
+      .map((c) => ({ ...c, total: db.entries.filter((e) => e.clientId === c.id && e.type === 'income').reduce((s, e) => s + e.amount, 0) }))
+      .sort((a, b) => b.total - a.total);
+    sendJson(res, 200, list);
+    return;
+  }
+
+  if (url.pathname === '/api/clients' && req.method === 'POST') {
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name || name.length > 100) {
+      sendJson(res, 400, { error: 'name: непустая строка до 100 символов' });
+      return;
+    }
+    if (body.type !== 'person' && body.type !== 'company') {
+      sendJson(res, 400, { error: 'type: person | company' });
+      return;
+    }
+    const client: import('./store.js').Client = {
+      id: randomUUID(),
+      userId: user!.id,
+      name: name.slice(0, 100),
+      type: body.type,
+      createdAt: Date.now(),
+    };
+    if (typeof body.phone === 'string' && body.phone) client.phone = body.phone.slice(0, 30);
+    if (typeof body.note === 'string' && body.note) client.note = body.note.slice(0, 500);
+    db.clients.push(client);
+    await saveDB();
+    sendJson(res, 200, client);
+    return;
+  }
+
+  const clientMatch = url.pathname.match(/^\/api\/clients\/([\w-]+)$/);
+  if (clientMatch && req.method === 'DELETE') {
+    const before = db.clients.length;
+    db.clients = db.clients.filter((c) => !(c.id === clientMatch[1] && c.userId === user!.id));
+    if (db.clients.length === before) {
+      sendJson(res, 404, { error: 'Контрагент не найден' });
+      return;
+    }
+    for (const e of db.entries) if (e.userId === user!.id && e.clientId === clientMatch[1]) delete e.clientId;
+    await saveDB();
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -382,6 +446,16 @@ const server = createServer(async (req, res) => {
     if (typeof body.method === 'string' && body.method) entry.method = body.method.slice(0, 50); else delete entry.method;
     if (typeof body.receipt === 'string' && body.receipt) entry.receipt = body.receipt.slice(0, 100); else delete entry.receipt;
     if (typeof body.note === 'string' && body.note) entry.note = body.note.slice(0, 500); else delete entry.note;
+    if (typeof body.clientId === 'string' && body.clientId) {
+      const client = db.clients.find((c) => c.id === body.clientId && c.userId === user!.id);
+      if (!client) {
+        sendJson(res, 400, { error: 'Контрагент не найден' });
+        return;
+      }
+      entry.clientId = client.id;
+    } else {
+      delete entry.clientId;
+    }
     await saveDB();
     sendJson(res, 200, entry);
     return;

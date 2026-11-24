@@ -27,6 +27,8 @@ export interface YearSummary {
   yearTax: number;
   npdLimitLeft: number | null;
   nextDeadlines: { date: string; label: string }[];
+  categories: { category: string; income: number; expense: number }[];
+  comparison: { npd: number; usn6: number; usn15: number; best: Regime };
 }
 
 function monthKey(date: string): string {
@@ -110,6 +112,25 @@ export function summarize(entries: Entry[], profile: Profile, year: number, now 
     });
   }
 
+  const byCategory: Record<string, { income: number; expense: number }> = {};
+  for (const e of entries) {
+    const b = (byCategory[e.category] ??= { income: 0, expense: 0 });
+    if (e.type === 'income') b.income += e.amount;
+    else b.expense += e.amount;
+  }
+  const categories = Object.entries(byCategory)
+    .map(([category, v]) => ({ category, income: Math.round(v.income * 100) / 100, expense: Math.round(v.expense * 100) / 100 }))
+    .sort((a, b) => b.income + b.expense - (a.income + a.expense));
+
+  const npdGross = entries.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount * npdRate(e.payerType), 0);
+  const contributions = profile.fixedContributions || DEFAULT_FIXED_CONTRIBUTIONS;
+  const comparison = {
+    npd: Math.round(Math.max(0, npdGross - NPD_DEDUCTION) * 100) / 100,
+    usn6: Math.round(Math.max(0, yearIncome * USN6_RATE - (profile.status === 'ip' ? contributions : 0)) * 100) / 100,
+    usn15: Math.round(Math.max(0, (yearIncome - yearExpenses) * USN15_RATE) * 100) / 100,
+  };
+  const best = (Object.entries(comparison) as [Regime, number][]).sort((a, b) => a[1] - b[1])[0][0];
+
   return {
     year,
     regime: profile.regime,
@@ -119,5 +140,7 @@ export function summarize(entries: Entry[], profile: Profile, year: number, now 
     yearTax: Math.round(yearTax * 100) / 100,
     npdLimitLeft: profile.regime === 'npd' ? Math.max(0, NPD_LIMIT_YEAR - yearIncome) : null,
     nextDeadlines: deadlines.slice(0, 6),
+    categories,
+    comparison: { ...comparison, best },
   };
 }
