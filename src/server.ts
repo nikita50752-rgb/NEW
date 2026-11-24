@@ -37,6 +37,11 @@ if (!process.env.MISTRAL_API_KEY) {
   process.exit(1);
 }
 
+if (/\s/.test(process.env.MISTRAL_API_KEY) || process.env.MISTRAL_API_KEY.length < 20) {
+  console.warn('Warning: MISTRAL_API_KEY looks malformed (spaces or too short).');
+  console.warn('Create a fresh key at https://console.mistral.ai/api-keys and paste it into .env.');
+}
+
 const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
 interface ChatMessage {
@@ -108,7 +113,16 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { reply });
     } catch (err) {
       console.error('Mistral API error:', err);
-      sendJson(res, 502, { error: 'Mistral API request failed' });
+      const e = err as { statusCode?: number; body?: unknown };
+      let detail = '';
+      if (typeof e.body === 'string') {
+        try {
+          detail = (JSON.parse(e.body) as { detail?: string }).detail ?? '';
+        } catch {
+          detail = e.body;
+        }
+      }
+      sendJson(res, 502, { error: 'Mistral API request failed', status: e.statusCode, detail });
     }
     return;
   }

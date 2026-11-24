@@ -111,7 +111,12 @@
           body: JSON.stringify({ messages: history }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
+        if (!res.ok) {
+          const parts = [data.error || 'Ошибка сервера'];
+          if (data.status) parts.push('статус ' + data.status);
+          if (data.detail) parts.push(data.detail);
+          throw new Error(parts.join(' — '));
+        }
         pending.textContent = data.reply;
         history.push({ role: 'assistant', content: data.reply });
       } catch (err) {
